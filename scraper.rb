@@ -22,7 +22,7 @@ def members_data(url)
 
     area_data = tds[1].text.split("\n")
     #circ = tds[1].text.tidy.sub('unique circ', '1è circ').sub('circ. unique', '1è circ').sub('1ère circ.', '1è circ')
-    circ = area_data[1].to_s.match(/(\d+)è\.?\s*circ\.?\s*d.\s*(.*)/) || []
+    circ = area_data[1].to_s.match(/(\d+)è\.?\s*circ\.?\s*d\w+\s*(.*)/) || []
 
     dep = tr.xpath('.//preceding::h4').last.text.tidy
     area = {
