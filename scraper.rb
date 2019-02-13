@@ -1,5 +1,4 @@
 #!/bin/env ruby
-# encoding: utf-8
 # frozen_string_literal: true
 
 require 'pry'
@@ -9,47 +8,76 @@ require 'scraperwiki'
 require 'open-uri/cached'
 OpenURI::Cache.cache_path = '.cache'
 
-def noko_for(url)
-  Nokogiri::HTML(open(url).read)
-end
+class MembersPage < Scraped::HTML
+  field :members do
+    member_rows.map { |mp| fragment(mp => MemberRow).to_h }
+  end
 
-def members_data(url)
-  noko = noko_for(url)
+  private
 
-  # table id="table_separate"
-  noko.xpath('//h4[contains(.,"partement")]//following-sibling::table[1]//tr[td]').map do |tr|
-    tds = tr.css('td')
-
-    area_data = tds[1].text.split("\n")
-    #circ = tds[1].text.tidy.sub('unique circ', '1è circ').sub('circ. unique', '1è circ').sub('1ère circ.', '1è circ')
-    circ = area_data[1].to_s.match(/(\d+)è\.?\s*circ\.?\s*d\w+\s*(.*)/) || []
-
-    dep = tr.xpath('.//preceding::h4').last.text.tidy
-    area = {
-      departement: dep.sub(/DÉPARTEMENT /i, '').sub(/^(du|de l.)\s*/, '').sub(/:$/,''),
-      district:    area_data.first,
-      circ_id:     circ[1],
-      circ:        circ[2],
-    }
-    area[:district] = 'Saint Marc' if area[:district] == 'St. Marc'
-    # TODO handle missing parts
-    area[:id] = 'ocd-division/country:ht/departement:%s/arrondissement:%s/circonscription:%s' %
-      %i[departement district circ_id].map { |i| area[i].to_s.downcase.tr(' ', '_') }
-
-    {
-      name:    tds[0].text.tidy.sub('Siège vacant dû au décès de ', '').sub(/ \(.*?\)/, ''),
-      region:  dep,
-      area_id: area[:id],
-      area:    area[:circ],
-      party:   tds[2].text.tidy,
-      term:    '2015',
-      source:  url,
-    }
+  def member_rows
+    noko.xpath('//h4[contains(.,"partement")]//following-sibling::table[1]//tr[td]')
   end
 end
 
-data = members_data('https://www.haiti-reference.com/pages/plan/politique/pouvoir-legislatif/chambre-des-deputes/')
-data.each { |mem| puts mem.reject { |_, v| v.to_s.empty? }.sort_by { |k, _| k }.to_h } if ENV['MORPH_DEBUG']
+class MemberRow < Scraped::HTML
+  field :name do
+    tds[0].text.tidy.sub('Siège vacant dû au décès de ', '').sub(/ \(.*?\)/, '')
+  end
 
-ScraperWiki.sqliteexecute('DROP TABLE data') rescue nil
-ScraperWiki.save_sqlite(%i[name area_id], data)
+  field :region do
+    noko.xpath('.//preceding::h4').last.text.tidy.sub(/DÉPARTEMENT /i, '').sub(/^(du|de l.)\s*/, '').sub(/:$/, '')
+  end
+
+  field :area_id do
+    ocd = 'ocd-division/country:ht/departement:%s' % region.downcase.tr(' ', '_')
+    ocd += '/arrondissement:%s' % district.downcase.tr(' ', '_') if district
+    ocd += '/circonscription:%s' % circonscription_id.downcase.tr(' ', '_') if circonscription_id
+    ocd
+  end
+
+  field :area do
+    circonscription
+  end
+
+  field :party do
+    tds[2].text.tidy
+  end
+
+  field :term do
+    '2015'
+  end
+
+  field :source do
+    url
+  end
+
+  private
+
+  def tds
+    noko.css('td')
+  end
+
+  def area_data
+    tds[1].text.split("\n")
+  end
+
+  def circ_parts
+    area_data[1].to_s.match(/(\d+)è\.?\s*circ\.?\s*d\w+\s*(.*)/) || []
+  end
+
+  def circonscription
+    circ_parts[2]
+  end
+
+  def circonscription_id
+    circ_parts[1]
+  end
+
+  def district
+    area_data.first
+  end
+end
+
+url = 'https://www.haiti-reference.com/pages/plan/politique/pouvoir-legislatif/chambre-des-deputes/'
+Scraped::Scraper.new(url => MembersPage).store(:members, index: %i[name area_id])
